@@ -1,3 +1,7 @@
+
+## `setup.sh` 전체
+
+```bash
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
@@ -26,7 +30,7 @@ apt-get install -y --no-install-recommends \
     libsndfile1 \
     libsndfile1-dev \
     python3-dev \
-    python3-venv
+    python3-venv \
     procps
 
 echo
@@ -206,7 +210,10 @@ SERVER_PORT="$("${PYTHON}" - <<'PY'
 import socket
 
 for port in range(11111, 11212):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    with socket.socket(
+        socket.AF_INET,
+        socket.SOCK_STREAM,
+    ) as sock:
         try:
             sock.bind(("127.0.0.1", port))
         except OSError:
@@ -215,7 +222,9 @@ for port in range(11111, 11212):
         print(port)
         break
 else:
-    raise RuntimeError("11111~11211 범위에서 빈 포트를 찾지 못했습니다.")
+    raise RuntimeError(
+        "11111~11211 범위에서 빈 포트를 찾지 못했습니다."
+    )
 PY
 )"
 
@@ -300,4 +309,3 @@ echo
 cloudflared tunnel \
     --url "http://127.0.0.1:${SERVER_PORT}" \
     --no-autoupdate
-

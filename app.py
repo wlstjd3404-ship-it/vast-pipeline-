@@ -1,4 +1,5 @@
 import gc
+import inspect
 import os
 import threading
 import traceback
@@ -247,13 +248,24 @@ def download_drive_folder(
 ) -> list[str]:
     download_dir.mkdir(parents=True, exist_ok=True)
 
-    result = gdown.download_folder(
-        url=drive_url,
-        output=str(download_dir),
-        quiet=False,
-        use_cookies=False,
-        remaining_ok=True,
-    )
+    download_options = {
+        "url": drive_url,
+        "output": str(download_dir),
+        "quiet": False,
+        "use_cookies": False,
+    }
+
+    try:
+        supported_parameters = inspect.signature(
+            gdown.download_folder
+        ).parameters
+
+        if "remaining_ok" in supported_parameters:
+            download_options["remaining_ok"] = True
+    except (TypeError, ValueError):
+        pass
+
+    result = gdown.download_folder(**download_options)
 
     if not result:
         raise RuntimeError(
@@ -807,11 +819,11 @@ if __name__ == "__main__":
 
     print("", flush=True)
     print(
-        "공개 웹 주소를 생성하고 있습니다.",
+        "Gradio 로컬 웹서버를 시작합니다.",
         flush=True,
     )
     print(
-        "잠시 후 표시되는 https://....gradio.live 주소를 클릭하세요.",
+        "Cloudflare 공개 주소는 setup.sh에서 생성됩니다.",
         flush=True,
     )
     print("", flush=True)
@@ -820,26 +832,18 @@ if __name__ == "__main__":
         default_concurrency_limit=1,
     )
 
-    print("", flush=True)
-    print("Gradio 로컬 웹서버를 시작합니다.", flush=True)
-    print("Cloudflare 공개 주소는 setup.sh에서 생성됩니다.", flush=True)
-    print("", flush=True)
-
-    demo.queue(
-        default_concurrency_limit=1,
+    server_port = int(
+        os.environ.get(
+            "GRADIO_SERVER_PORT",
+            "11111",
+        )
     )
-
-    server_port = int(os.environ.get("GRADIO_SERVER_PORT", "11111"))
 
     demo.launch(
         server_name="0.0.0.0",
         server_port=server_port,
-
-        # Gradio 공유 서버 대신 Cloudflare를 사용
         share=False,
-
         inbrowser=False,
         show_error=True,
         allowed_paths=[str(JOBS_DIR)],
     )
-
