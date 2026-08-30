@@ -113,7 +113,7 @@ with gr.Blocks(title="Vast.ai Pipeline") as demo:
 if __name__ == "__main__":
     port = int(os.environ.get("GRADIO_PORT", "7860"))
     user = os.environ.get("UI_USER", "admin")
-    pw   = os.environ.get("UI_PASS", "changeme1234")
+    pw   = os.environ.get("UI_PASS", "1234")
     kw = dict(server_name="0.0.0.0", server_port=port, auth=(user, pw), show_error=True)
     try:
         demo.queue().launch(share=True, **kw)
