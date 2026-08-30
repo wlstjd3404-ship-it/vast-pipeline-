@@ -5,23 +5,22 @@ set -e
 REPO_DIR="/workspace/repo"
 VENV_LADA="/workspace/venv_lada"
 VENV_STT="/workspace/venv_stt"
+CONSTRAINT="/workspace/constraints_stt.txt"
 
 echo "=============================================="
 echo "▶ [0/6] 이전 실패 흔적 정리"
 echo "=============================================="
-# STT venv 가 3.10 이 아니면 폐기 (espnet 은 3.12 미지원)
 if [ -x "$VENV_STT/bin/python" ]; then
   V=$("$VENV_STT/bin/python" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo none)
   if [ "$V" != "3.10" ]; then
-    echo "  기존 STT venv(python $V) 삭제 → 3.10 으로 재생성"
+    echo "  기존 STT venv(python $V) 삭제 → 3.10 재생성"
     rm -rf "$VENV_STT"
   fi
 fi
-# LADA venv 에 잘못 박힌 numpy1.x 제거 (시스템 scipy/opencv 는 numpy2 ABI)
 if [ -x "$VENV_LADA/bin/pip" ]; then
   NV=$("$VENV_LADA/bin/python" -c 'import numpy;print(numpy.__version__)' 2>/dev/null || echo none)
   case "$NV" in
-    1.*) echo "  venv_lada 의 numpy $NV 제거 → 시스템 numpy2 로 복귀"
+    1.*) echo "  venv_lada 의 numpy $NV 제거 → 시스템 numpy2 복귀"
          "$VENV_LADA/bin/pip" uninstall -y -q numpy || true ;;
   esac
 fi
@@ -49,10 +48,10 @@ cd /workspace
 cd /workspace/lada
 "$VENV_LADA/bin/pip" install -q -e ".[nvidia]"
 "$VENV_LADA/bin/pip" install -q ffmpeg-python huggingface_hub gdown
-# ★ numpy<2 를 절대 강제하지 않음 (시스템 scipy/opencv ABI 파괴 방지)
+# ★ numpy<2 강제 금지 (시스템 scipy/opencv ABI 파괴 방지)
 
 echo "=============================================="
-echo "▶ [4/6] STT 전용 venv — Python 3.10"
+echo "▶ [4/6] STT 전용 venv — Python 3.10 + numpy 1.26 고정"
 echo "=============================================="
 cd /workspace
 [ -d ReazonSpeech ] || git clone -q https://github.com/reazon-research/ReazonSpeech
@@ -61,12 +60,29 @@ if [ ! -x "$VENV_STT/bin/python" ]; then
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
   uv venv --python 3.10 --seed "$VENV_STT"
 fi
+
+# ★ 핵심: 모든 후속 설치에서 numpy 승격 차단 (빌드 환경에도 적용됨)
+echo "numpy==1.26.4" > "$CONSTRAINT"
+export PIP_CONSTRAINT="$CONSTRAINT"
+
 PIP_STT="$VENV_STT/bin/pip"
 $PIP_STT install -q --upgrade pip setuptools wheel
 $PIP_STT install -q torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
-$PIP_STT install -q "numpy<2" librosa soundfile noisereduce gdown
+$PIP_STT install -q "numpy==1.26.4" librosa soundfile noisereduce gdown
 $PIP_STT install -q espnet espnet_model_zoo
 $PIP_STT install -q /workspace/ReazonSpeech/pkg/espnet-asr
+# 혹시라도 올라갔으면 되돌림
+$PIP_STT install -q "numpy==1.26.4"
+
+echo "  ▶ STT 환경 자체 검증"
+"$VENV_STT/bin/python" - <<'PY'
+import sys, numpy, torch, ctc_segmentation, espnet2
+from reazonspeech.espnet.asr import transcribe, audio_from_path
+assert numpy.__version__.startswith("1."), f"numpy 승격 감지: {numpy.__version__}"
+print(f"  ✔ py{sys.version.split()[0]} / numpy {numpy.__version__} / torch {torch.__version__} / cuda={torch.cuda.is_available()}")
+PY
+
+unset PIP_CONSTRAINT
 
 echo "=============================================="
 echo "▶ [5/6] 모델 가중치 다운로드"
