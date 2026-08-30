@@ -1,4 +1,5 @@
 import os
+import glob
 import threading
 import subprocess
 from collections import deque
@@ -12,6 +13,14 @@ MAX_LOG_LINES = 800
 
 is_running = False
 lock = threading.Lock()
+
+
+def _nvidia_ld_path(py_bin: str) -> str:
+    """해당 venv 안의 nvidia/*/lib 디렉터리를 LD_LIBRARY_PATH 형식으로 반환.
+    ★ libcusparseLt.so.0 등 CUDA 서브라이브러리 로드 실패 방지"""
+    venv = os.path.dirname(os.path.dirname(py_bin))
+    dirs = sorted(glob.glob(f"{venv}/lib/python*/site-packages/nvidia/*/lib"))
+    return ":".join(dirs)
 
 
 def stream_process(cmd):
@@ -31,6 +40,11 @@ def stream_process(cmd):
 
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
+        # ★ 호출 대상 venv 기준으로 CUDA 라이브러리 경로 주입
+        nv = _nvidia_ld_path(cmd[0])
+        if nv:
+            env["LD_LIBRARY_PATH"] = nv + ":" + env.get("LD_LIBRARY_PATH", "")
+
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=0, env=env, cwd=REPO,
