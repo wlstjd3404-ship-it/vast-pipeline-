@@ -16,6 +16,7 @@ lock = threading.Lock()
 def _nvidia_ld_path(py_bin: str) -> str:
     venv = os.path.dirname(os.path.dirname(py_bin))
     dirs = sorted(glob.glob(f"{venv}/lib/python*/site-packages/nvidia/*/lib"))
+    dirs += sorted(glob.glob(f"{venv}/lib/python*/site-packages/torch/lib"))
     return ":".join(dirs)
 
 def stream_process(cmd):
