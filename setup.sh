@@ -88,7 +88,8 @@ echo " 4. Python 패키지 설치"
 echo "============================================================"
 
 "${PIP}" install --upgrade \
-    "numpy==1.26.4"
+    "numpy==1.26.4" \
+    "scipy<1.14"
 
 "${PIP}" install --upgrade \
     "gradio>=5.0,<7.0" \
@@ -105,9 +106,10 @@ echo "============================================================"
 "${PIP}" install \
     "git+https://github.com/reazon-research/ReazonSpeech.git#subdirectory=pkg/espnet-asr"
 
-# 패키지 설치 과정에서 NumPy가 2.x로 변경되는 것을 방지
+# 패키지 의존성으로 인해 버전이 깨지는 것을 방지
 "${PIP}" install --force-reinstall \
-    "numpy==1.26.4"
+    "numpy==1.26.4" \
+    "scipy<1.14"
 
 echo
 echo "============================================================"
