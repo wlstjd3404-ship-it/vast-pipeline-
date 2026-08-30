@@ -1,18 +1,10 @@
+cat << 'EOF' > /workspace/repo/setup.sh
 #!/usr/bin/env bash
 set -e
 
-# ==============================================
-# 0. 경로 및 환경 설정
-# ==============================================
-if [ -f "$PWD/app.py" ]; then
-    REPO_DIR="$PWD"
-else
-    REPO_DIR="/workspace/repo"
-fi
-
+REPO_DIR="/workspace/repo"
 VENV_LADA="/workspace/venv_lada"
 VENV_STT="/workspace/venv_stt"
-GITHUB_REPO_URL="${1:-}"
 
 echo "=============================================="
 echo "▶ [1/7] 시스템 패키지 및 Rclone 점검"
@@ -26,23 +18,22 @@ if ! command -v rclone &> /dev/null; then
 fi
 rclone version | head -n 1
 
-# Rclone 설정 파일 대화형 입력 (기존 설정 부재 시에만 프롬프트 표시)
+# Rclone 설정 파일 대화형 입력
 RCLONE_CONF="/root/.config/rclone/rclone.conf"
 if [ ! -f "$RCLONE_CONF" ] || ! grep -q "\[gdrive\]" "$RCLONE_CONF" 2>/dev/null; then
     echo "----------------------------------------------"
     echo "⚠️ Rclone 구글 드라이브 토큰 설정이 필요합니다."
     echo "터미널에 JSON 형태의 token 값 전체를 붙여넣고 [Enter]를 누르세요."
-    echo "예시: {\"access_token\":\"...\",\"refresh_token\":\"...\"}"
     echo "----------------------------------------------"
     read -r -p "Gdrive Token JSON: " GDRIVE_TOKEN
     
     mkdir -p /root/.config/rclone
-    cat << EOF > "$RCLONE_CONF"
+    cat << EOF_CONF > "$RCLONE_CONF"
 [gdrive]
 type = drive
 scope = drive
 token = $GDRIVE_TOKEN
-EOF
+EOF_CONF
     echo "✅ rclone.conf 생성이 완료되었습니다."
 fi
 
@@ -50,17 +41,8 @@ echo "--- Rclone 드라이브 연결 테스트 ---"
 rclone lsd gdrive: || echo "⚠️ gdrive 연결 실패 (토큰 값 재확인 필요)"
 
 echo "=============================================="
-echo "▶ [2/7] GitHub 레포지토리 준비"
+echo "▶ [2/7] GitHub 레포지토리 점검"
 echo "=============================================="
-if [ ! -d "$REPO_DIR" ]; then
-    if [ -n "$GITHUB_REPO_URL" ]; then
-        git clone "$GITHUB_REPO_URL" "$REPO_DIR"
-    else
-        echo "❌ $REPO_DIR 디렉토리가 없습니다."
-        echo "사용법: bash setup.sh <깃허브_레포지토리_URL>"
-        exit 1
-    fi
-fi
 echo "저장소 디렉토리: $REPO_DIR"
 
 echo "=============================================="
@@ -125,3 +107,7 @@ echo "▶ [7/7] Web UI 실행"
 echo "=============================================="
 cd "$REPO_DIR"
 python app.py
+EOF
+
+cd /workspace/repo
+bash setup.sh
