@@ -3,8 +3,6 @@ set -Eeuo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="${APP_DIR}/.venv"
-LOG_FILE="/workspace/subtitle-web.log"
-PID_FILE="/workspace/subtitle-web.pid"
 
 export DEBIAN_FRONTEND=noninteractive
 export PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -12,15 +10,17 @@ export HF_HOME="/workspace/.cache/huggingface"
 export TORCH_HOME="/workspace/.cache/torch"
 export XDG_CACHE_HOME="/workspace/.cache"
 
-echo "========================================"
-echo " 시스템 패키지 설치"
-echo "========================================"
+echo "============================================================"
+echo " 1. 시스템 패키지 설치"
+echo "============================================================"
 
 apt-get update
+
 apt-get install -y --no-install-recommends \
     git \
     ffmpeg \
     curl \
+    wget \
     ca-certificates \
     build-essential \
     libsndfile1 \
@@ -28,8 +28,11 @@ apt-get install -y --no-install-recommends \
     python3-dev \
     python3-venv
 
-# Python 3.13에서는 NumPy 1.x 및 일부 ESPnet 패키지가 동작하지 않으므로
-# 3.10~3.12 버전을 사용한다.
+echo
+echo "============================================================"
+echo " 2. 호환되는 Python 확인"
+echo "============================================================"
+
 PYTHON_BIN=""
 
 for candidate in python3.12 python3.11 python3.10 python3; do
@@ -46,21 +49,28 @@ PY
 done
 
 if [ -z "${PYTHON_BIN}" ]; then
-    echo "Python 3.10 설치 중..."
-    apt-get install -y python3.10 python3.10-venv python3.10-dev
+    echo "호환되는 Python이 없어 Python 3.10을 설치합니다."
+
+    apt-get install -y \
+        python3.10 \
+        python3.10-venv \
+        python3.10-dev
+
     PYTHON_BIN="$(command -v python3.10)"
 fi
 
-echo "사용할 Python: ${PYTHON_BIN}"
+echo "사용할 Python:"
 "${PYTHON_BIN}" --version
 
-echo "========================================"
-echo " 가상환경 생성"
-echo "========================================"
+echo
+echo "============================================================"
+echo " 3. Python 가상환경 생성"
+echo "============================================================"
 
 if [ ! -d "${VENV_DIR}" ]; then
-    # Vast PyTorch 이미지에 설치된 torch를 재사용한다.
-    "${PYTHON_BIN}" -m venv --system-site-packages "${VENV_DIR}"
+    "${PYTHON_BIN}" -m venv \
+        --system-site-packages \
+        "${VENV_DIR}"
 fi
 
 PYTHON="${VENV_DIR}/bin/python"
@@ -72,8 +82,13 @@ PIP="${VENV_DIR}/bin/pip"
     wheel \
     packaging
 
-# ESPnet/ReazonSpeech 호환성을 위해 NumPy 1.x 고정
-"${PIP}" install --upgrade "numpy==1.26.4"
+echo
+echo "============================================================"
+echo " 4. Python 패키지 설치"
+echo "============================================================"
+
+"${PIP}" install --upgrade \
+    "numpy==1.26.4"
 
 "${PIP}" install --upgrade \
     "gradio>=5.0,<7.0" \
@@ -84,25 +99,30 @@ PIP="${VENV_DIR}/bin/pip"
     "noisereduce>=3.0.2"
 
 "${PIP}" install \
-    "espnet" \
-    "espnet_model_zoo"
+    espnet \
+    espnet_model_zoo
 
 "${PIP}" install \
     "git+https://github.com/reazon-research/ReazonSpeech.git#subdirectory=pkg/espnet-asr"
 
-# 현재 Python 환경에서 torch가 없는 경우 CUDA 12.8 버전 설치
+# 패키지 설치 과정에서 NumPy가 2.x로 변경되는 것을 방지
+"${PIP}" install --force-reinstall \
+    "numpy==1.26.4"
+
+echo
+echo "============================================================"
+echo " 5. PyTorch와 CUDA 확인"
+echo "============================================================"
+
 if ! "${PYTHON}" -c "import torch" >/dev/null 2>&1; then
-    echo "PyTorch CUDA 12.8 설치 중..."
+    echo "PyTorch가 없어 CUDA 12.8 버전을 설치합니다."
+
     "${PIP}" install \
         torch \
         torchvision \
         torchaudio \
         --index-url https://download.pytorch.org/whl/cu128
 fi
-
-echo "========================================"
-echo " 설치 확인"
-echo "========================================"
 
 "${PYTHON}" - <<'PY'
 import sys
@@ -112,67 +132,57 @@ import torch
 print("Python:", sys.version)
 print("NumPy:", numpy.__version__)
 print("PyTorch:", torch.__version__)
+print("PyTorch CUDA:", torch.version.cuda)
 print("CUDA 사용 가능:", torch.cuda.is_available())
 
-if torch.cuda.is_available():
-    print("GPU:", torch.cuda.get_device_name(0))
-    print("CUDA:", torch.version.cuda)
-else:
-    raise RuntimeError("CUDA GPU를 사용할 수 없습니다.")
+if not torch.cuda.is_available():
+    raise RuntimeError(
+        "CUDA GPU를 사용할 수 없습니다. "
+        "Vast.ai 인스턴스와 PyTorch 환경을 확인하세요."
+    )
+
+print("GPU:", torch.cuda.get_device_name(0))
 PY
+
+echo
+echo "============================================================"
+echo " 6. 작업 디렉터리 생성"
+echo "============================================================"
 
 mkdir -p \
     /workspace/jobs \
     /workspace/.cache/huggingface \
     /workspace/.cache/torch
 
-# 기존 웹 서버 종료
-if [ -f "${PID_FILE}" ]; then
-    OLD_PID="$(cat "${PID_FILE}" || true)"
-    if [ -n "${OLD_PID}" ] && kill -0 "${OLD_PID}" 2>/dev/null; then
-        kill "${OLD_PID}" || true
-        sleep 2
-    fi
-    rm -f "${PID_FILE}"
-fi
+echo
+echo "============================================================"
+echo " 7. 기존 자막 웹서버 정리"
+echo "============================================================"
 
-echo "========================================"
-echo " 웹 서버 시작"
-echo "========================================"
+pkill -f "${APP_DIR}/app.py" 2>/dev/null || true
+sleep 2
+
+echo
+echo "======================================================================"
+echo " 자막 추출 웹서버를 시작합니다."
+echo
+echo " 잠시 후 터미널에 아래와 같은 공개 주소가 출력됩니다."
+echo
+echo " https://xxxxxxxxxxxxxxxx.gradio.live"
+echo
+echo " 해당 주소를 클릭하면 자막 추출 웹페이지가 열립니다."
+echo " 웹서버가 실행되는 동안 이 터미널을 닫지 마세요."
+echo " 종료하려면 Ctrl+C를 누르세요."
+echo "======================================================================"
+echo
 
 cd "${APP_DIR}"
 
-nohup env \
+exec env \
     HF_HOME="${HF_HOME}" \
     TORCH_HOME="${TORCH_HOME}" \
     XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+    GRADIO_ANALYTICS_ENABLED="False" \
     GRADIO_SERVER_NAME="0.0.0.0" \
     GRADIO_SERVER_PORT="11111" \
-    "${PYTHON}" "${APP_DIR}/app.py" \
-    >"${LOG_FILE}" 2>&1 &
-
-APP_PID=$!
-echo "${APP_PID}" > "${PID_FILE}"
-
-echo "웹 서버 PID: ${APP_PID}"
-echo "로그 파일: ${LOG_FILE}"
-
-for i in $(seq 1 30); do
-    if curl -fsS "http://127.0.0.1:11111/" >/dev/null 2>&1; then
-        echo "웹 서버가 정상적으로 시작되었습니다."
-        echo "Vast.ai의 Open 버튼을 눌러 접속하세요."
-        exit 0
-    fi
-
-    if ! kill -0 "${APP_PID}" 2>/dev/null; then
-        echo "웹 서버 실행에 실패했습니다."
-        tail -n 100 "${LOG_FILE}" || true
-        exit 1
-    fi
-
-    sleep 2
-done
-
-echo "서버는 실행 중이지만 준비 시간이 오래 걸리고 있습니다."
-echo "다음 명령으로 로그를 확인하세요:"
-echo "tail -f ${LOG_FILE}"
+    "${PYTHON}" "${APP_DIR}/app.py"
