@@ -820,16 +820,26 @@ if __name__ == "__main__":
         default_concurrency_limit=1,
     )
 
+    print("", flush=True)
+    print("Gradio 로컬 웹서버를 시작합니다.", flush=True)
+    print("Cloudflare 공개 주소는 setup.sh에서 생성됩니다.", flush=True)
+    print("", flush=True)
+
+    demo.queue(
+        default_concurrency_limit=1,
+    )
+
+    server_port = int(os.environ.get("GRADIO_SERVER_PORT", "11111"))
+
     demo.launch(
         server_name="0.0.0.0",
-        server_port=11111,
+        server_port=server_port,
 
-        # 개인 PC에서 접속할 수 있는 공개 웹 주소 생성
-        share=True,
+        # Gradio 공유 서버 대신 Cloudflare를 사용
+        share=False,
 
-        # Vast.ai 서버에서 브라우저를 직접 열지 않음
         inbrowser=False,
-
         show_error=True,
         allowed_paths=[str(JOBS_DIR)],
     )
+
