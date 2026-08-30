@@ -1,231 +1,178 @@
-cat << 'EOF' > /workspace/repo/setup.sh
 #!/usr/bin/env bash
-set -e
+set -Eeuo pipefail
 
-REPO_DIR="/workspace/repo"
-VENV_LADA="/workspace/venv_lada"
-VENV_STT="/workspace/venv_stt"
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_DIR="${APP_DIR}/.venv"
+LOG_FILE="/workspace/subtitle-web.log"
+PID_FILE="/workspace/subtitle-web.pid"
 
-# ★ 전역 제약: 모든 pip 호출에서 setuptools 81+ 차단 (pkg_resources 제거 방지)
-CONSTRAINT_FILE="/workspace/constraints.txt"
-printf 'setuptools<81\n' > "$CONSTRAINT_FILE"
-export PIP_CONSTRAINT="$CONSTRAINT_FILE"
-
-# ★ venv 내부 nvidia 휠의 .so 경로를 모아 LD_LIBRARY_PATH 문자열 생성
-nvidia_ld_path() {
-  local venv="$1" dirs
-  dirs=$(ls -d "$venv"/lib/python*/site-packages/nvidia/*/lib \
-                "$venv"/lib/python*/site-packages/torch/lib 2>/dev/null | tr '\n' ':')
-  echo "${dirs%:}"
-}
-
-echo "=============================================="
-echo "▶ [0/6] GPU 아키텍처 감지 + 이전 실패 흔적 정리"
-echo "=============================================="
-# ★★ compute capability 에 맞는 torch 휠 채널 결정 (sm_120 = RTX 50xx 대응)
-CC_RAW=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ')
-CC=$(echo "$CC_RAW" | tr -d '.')
-CC=${CC:-90}
-GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
-echo "  GPU = ${GPU_NAME:-unknown} / compute_cap = ${CC_RAW:-unknown} (sm_${CC})"
-
-if [ "$CC" -ge 100 ]; then
-  # Blackwell: RTX 5090=sm_120, B200=sm_100 → CUDA 12.8 빌드 필수
-  TORCH_VER="2.8.0"; TORCHAUDIO_VER="2.8.0"; TORCH_IDX="https://download.pytorch.org/whl/cu128"
-elif [ "$CC" -ge 90 ]; then
-  TORCH_VER="2.5.1"; TORCHAUDIO_VER="2.5.1"; TORCH_IDX="https://download.pytorch.org/whl/cu124"
-else
-  TORCH_VER="2.5.1"; TORCHAUDIO_VER="2.5.1"; TORCH_IDX="https://download.pytorch.org/whl/cu121"
-fi
-TORCH_PKGS="torch==${TORCH_VER} torchaudio==${TORCHAUDIO_VER}"
-echo "  → STT venv 용 torch 선택: ${TORCH_PKGS} (${TORCH_IDX})"
-
-if [ -x "$VENV_STT/bin/python" ]; then
-  V=$("$VENV_STT/bin/python" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo none)
-  if [ "$V" != "3.10" ]; then
-    echo "  기존 STT venv(python $V) 삭제 → 3.10 으로 재생성"
-    rm -rf "$VENV_STT"
-  fi
-fi
-# ★★ torch 가 현재 GPU 아키텍처를 지원하지 않으면 venv_stt 폐기 후 재생성
-if [ -x "$VENV_STT/bin/python" ]; then
-  if ! "$VENV_STT/bin/python" - <<'PYARCH'
-import sys
-try:
-    import torch
-except Exception as e:
-    print(f"     torch import 실패: {e}"); sys.exit(1)
-if not torch.cuda.is_available():
-    print("     cuda 미사용 상태"); sys.exit(1)
-cap = torch.cuda.get_device_capability()
-archs = torch.cuda.get_arch_list()
-ok = any(a.startswith(f"sm_{cap[0]}{cap[1]}") for a in archs)
-print(f"     torch={torch.__version__} cap=sm_{cap[0]}{cap[1]} archs={archs} ok={ok}")
-sys.exit(0 if ok else 1)
-PYARCH
-  then
-    echo "  ✘ torch/GPU 아키텍처 불일치 → venv_stt 재생성"
-    rm -rf "$VENV_STT"
-  fi
-fi
-if [ -x "$VENV_STT/bin/python" ]; then
-  if ! "$VENV_STT/bin/python" -c 'import pkg_resources' >/dev/null 2>&1; then
-    echo "  venv_stt 의 pkg_resources 없음 → setuptools 79.0.1 강제 복구"
-    "$VENV_STT/bin/pip" install -q --force-reinstall "setuptools==79.0.1" || rm -rf "$VENV_STT"
-  fi
-fi
-if [ -x "$VENV_LADA/bin/pip" ]; then
-  NV=$("$VENV_LADA/bin/python" -c 'import numpy;print(numpy.__version__)' 2>/dev/null || echo none)
-  case "$NV" in
-    1.*) echo "  venv_lada 의 numpy $NV 제거 → 시스템 numpy2 로 복귀"
-         "$VENV_LADA/bin/pip" uninstall -y -q numpy || true ;;
-  esac
-fi
-
-echo "=============================================="
-echo "▶ [1/6] 시스템 패키지 점검"
-echo "=============================================="
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y ffmpeg curl git python3-venv libsndfile1 unzip
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+export HF_HOME="/workspace/.cache/huggingface"
+export TORCH_HOME="/workspace/.cache/torch"
+export XDG_CACHE_HOME="/workspace/.cache"
 
-echo "=============================================="
-echo "▶ [2/6] Web UI 의존성 및 gdown 설치"
-echo "=============================================="
-pip install -q --upgrade pip --root-user-action=ignore
-pip install -q "setuptools<81" wheel --root-user-action=ignore
-pip install -q gradio gdown --root-user-action=ignore
+echo "========================================"
+echo " 시스템 패키지 설치"
+echo "========================================"
 
-echo "=============================================="
-echo "▶ [3/6] LADA 전용 venv (시스템 py3.12 + 시스템 torch 재사용)"
-echo "=============================================="
-cd /workspace
-[ -d lada ] || git clone -q https://github.com/ladaapp/lada.git
-[ -d "$VENV_LADA" ] || python3 -m venv --system-site-packages "$VENV_LADA"
-"$VENV_LADA/bin/pip" install -q --upgrade pip
-"$VENV_LADA/bin/pip" install -q "setuptools<81" wheel
-cd /workspace/lada
-"$VENV_LADA/bin/pip" install -q -e ".[nvidia]"
-"$VENV_LADA/bin/pip" install -q ffmpeg-python huggingface_hub gdown
-# ★ numpy<2 를 절대 강제하지 않음 (시스템 scipy/opencv ABI 파괴 방지)
+apt-get update
+apt-get install -y --no-install-recommends \
+    git \
+    ffmpeg \
+    curl \
+    ca-certificates \
+    build-essential \
+    libsndfile1 \
+    libsndfile1-dev \
+    python3-dev \
+    python3-venv
 
-# ★ venv 안에 torch 가 새로 깔렸는지 확인 → 깔렸다면 CUDA 런타임 휠 보강
-LADA_SP=$(ls -d "$VENV_LADA"/lib/python*/site-packages 2>/dev/null | head -1)
-if [ -d "$LADA_SP/torch" ]; then
-  echo "  venv-local torch 감지 → CUDA 런타임 휠 보강 (libcusparseLt 등)"
-  "$VENV_LADA/bin/pip" install -q \
-      nvidia-cusparselt-cu12 nvidia-cusparse-cu12 nvidia-cublas-cu12 \
-      nvidia-cudnn-cu12 nvidia-cuda-runtime-cu12 nvidia-cuda-nvrtc-cu12 \
-      nvidia-cufft-cu12 nvidia-curand-cu12 nvidia-cusolver-cu12 \
-      nvidia-nccl-cu12 nvidia-nvtx-cu12 nvidia-nvjitlink-cu12 || true
+# Python 3.13에서는 NumPy 1.x 및 일부 ESPnet 패키지가 동작하지 않으므로
+# 3.10~3.12 버전을 사용한다.
+PYTHON_BIN=""
+
+for candidate in python3.12 python3.11 python3.10 python3; do
+    if command -v "${candidate}" >/dev/null 2>&1; then
+        if "${candidate}" - <<'PY' >/dev/null 2>&1
+import sys
+assert (3, 10) <= sys.version_info[:2] <= (3, 12)
+PY
+        then
+            PYTHON_BIN="$(command -v "${candidate}")"
+            break
+        fi
+    fi
+done
+
+if [ -z "${PYTHON_BIN}" ]; then
+    echo "Python 3.10 설치 중..."
+    apt-get install -y python3.10 python3.10-venv python3.10-dev
+    PYTHON_BIN="$(command -v python3.10)"
 fi
 
-# ★ sitecustomize: nvidia 휠의 .so 를 ctypes 로 프리로드 (LD_LIBRARY_PATH 의존 제거)
-cat > "$LADA_SP/sitecustomize.py" <<'PYSITE'
-import os, glob, ctypes
-_base = os.path.join(os.path.dirname(__file__), "nvidia")
-if os.path.isdir(_base):
-    _libs = sorted(glob.glob(os.path.join(_base, "*", "lib", "*.so*")))
-    for _ in range(2):                      # 의존 순서 문제 대비 2-pass
-        for _p in _libs:
-            try:
-                ctypes.CDLL(_p, mode=ctypes.RTLD_GLOBAL)
-            except OSError:
-                pass
-PYSITE
+echo "사용할 Python: ${PYTHON_BIN}"
+"${PYTHON_BIN}" --version
 
-echo "  ▶ LADA 환경 자체 검증"
-export LD_LIBRARY_PATH="$(nvidia_ld_path "$VENV_LADA"):${LD_LIBRARY_PATH}"
-if ! "$VENV_LADA/bin/python" - <<'PYEOF'
-import setuptools, numpy, torch
-print(f"     setuptools={setuptools.__version__} numpy={numpy.__version__} "
-      f"torch={torch.__version__} cuda={torch.cuda.is_available()}")
+echo "========================================"
+echo " 가상환경 생성"
+echo "========================================"
+
+if [ ! -d "${VENV_DIR}" ]; then
+    # Vast PyTorch 이미지에 설치된 torch를 재사용한다.
+    "${PYTHON_BIN}" -m venv --system-site-packages "${VENV_DIR}"
+fi
+
+PYTHON="${VENV_DIR}/bin/python"
+PIP="${VENV_DIR}/bin/pip"
+
+"${PYTHON}" -m pip install --upgrade \
+    pip \
+    setuptools \
+    wheel \
+    packaging
+
+# ESPnet/ReazonSpeech 호환성을 위해 NumPy 1.x 고정
+"${PIP}" install --upgrade "numpy==1.26.4"
+
+"${PIP}" install --upgrade \
+    "gradio>=5.0,<7.0" \
+    "gdown>=5.2.0" \
+    "huggingface_hub>=0.25.0" \
+    "librosa>=0.10.2,<0.12" \
+    "soundfile>=0.12.1" \
+    "noisereduce>=3.0.2"
+
+"${PIP}" install \
+    "espnet" \
+    "espnet_model_zoo"
+
+"${PIP}" install \
+    "git+https://github.com/reazon-research/ReazonSpeech.git#subdirectory=pkg/espnet-asr"
+
+# 현재 Python 환경에서 torch가 없는 경우 CUDA 12.8 버전 설치
+if ! "${PYTHON}" -c "import torch" >/dev/null 2>&1; then
+    echo "PyTorch CUDA 12.8 설치 중..."
+    "${PIP}" install \
+        torch \
+        torchvision \
+        torchaudio \
+        --index-url https://download.pytorch.org/whl/cu128
+fi
+
+echo "========================================"
+echo " 설치 확인"
+echo "========================================"
+
+"${PYTHON}" - <<'PY'
+import sys
+import numpy
+import torch
+
+print("Python:", sys.version)
+print("NumPy:", numpy.__version__)
+print("PyTorch:", torch.__version__)
+print("CUDA 사용 가능:", torch.cuda.is_available())
+
 if torch.cuda.is_available():
-    c = torch.cuda.get_device_capability()
-    print(f"     cap=sm_{c[0]}{c[1]} archs={torch.cuda.get_arch_list()}")
-    (torch.zeros(64, 64, device="cuda") @ torch.zeros(64, 64, device="cuda")).sum().item()
-    print("     ✔ CUDA 커널 실행 OK")
-PYEOF
-then
-  echo "  ⚠ venv-local torch 로드/실행 실패 → 제거 후 시스템 torch 로 폴백"
-  "$VENV_LADA/bin/pip" uninstall -y -q torch torchvision torchaudio || true
-  "$VENV_LADA/bin/python" - <<'PYEOF'
-import torch, numpy
-print(f"     [fallback] torch={torch.__version__} numpy={numpy.__version__} "
-      f"cuda={torch.cuda.is_available()} path={torch.__file__}")
-PYEOF
-fi
-[ -x "$VENV_LADA/bin/lada-cli" ] || { echo "  ✘ lada-cli 생성 실패"; exit 1; }
-
-echo "=============================================="
-echo "▶ [4/6] STT 전용 venv — Python 3.10 + numpy 1.26 + GPU 맞춤 torch"
-echo "=============================================="
-cd /workspace
-[ -d ReazonSpeech ] || git clone -q https://github.com/reazon-research/ReazonSpeech
-if [ ! -x "$VENV_STT/bin/python" ]; then
-  command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-  uv venv --python 3.10 --seed "$VENV_STT"
-fi
-PIP_STT="$VENV_STT/bin/pip"
-$PIP_STT install -q --upgrade pip
-# ★ uv --seed 가 심어놓은 setuptools 84 를 79.0.1 로 교체 (pkg_resources 필수)
-$PIP_STT install -q --force-reinstall "setuptools==79.0.1" wheel
-# ★★ 하드코딩된 cu121 대신 [0/6] 에서 감지한 채널 사용
-$PIP_STT install -q $TORCH_PKGS --index-url "$TORCH_IDX"
-# ★ librosa 0.11+ 는 pkg_resources 의존 제거 → 이중 안전장치
-$PIP_STT install -q "numpy==1.26.4" "librosa>=0.11.0" soundfile noisereduce gdown
-$PIP_STT install -q espnet espnet_model_zoo
-$PIP_STT install -q /workspace/ReazonSpeech/pkg/espnet-asr
-$PIP_STT install -q --force-reinstall "setuptools==79.0.1"
-$PIP_STT install -q "numpy==1.26.4"
-
-# ★★ espnet 설치 과정에서 torch 가 PyPI(cu12x 아닌) 버전으로 갈렸는지 확인 후 원복
-CUR_T=$("$VENV_STT/bin/python" -c 'import torch;print(torch.__version__)' 2>/dev/null || echo none)
-case "$CUR_T" in
-  ${TORCH_VER}+cu*|${TORCH_VER}) ;;
-  *) echo "  ⚠ torch 가 $CUR_T 로 변경됨 → ${TORCH_PKGS} 재설치"
-     $PIP_STT install -q --force-reinstall --no-deps $TORCH_PKGS --index-url "$TORCH_IDX"
-     $PIP_STT install -q "numpy==1.26.4" ;;
-esac
-
-# ★ STT venv 에도 동일한 프리로드 장치 설치
-STT_SP=$(ls -d "$VENV_STT"/lib/python*/site-packages 2>/dev/null | head -1)
-cp "$LADA_SP/sitecustomize.py" "$STT_SP/sitecustomize.py" 2>/dev/null || true
-
-echo "  ▶ STT 환경 자체 검증 (아키텍처 + 실제 커널 실행 + import)"
-LD_LIBRARY_PATH="$(nvidia_ld_path "$VENV_STT"):${LD_LIBRARY_PATH}" \
-TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 \
-"$VENV_STT/bin/python" - <<'PYEOF'
-import setuptools, pkg_resources, numpy, librosa, torch
-print(f"     setuptools={setuptools.__version__} numpy={numpy.__version__} librosa={librosa.__version__}")
-print(f"     torch={torch.__version__} cuda={torch.cuda.is_available()}")
-if torch.cuda.is_available():
-    c = torch.cuda.get_device_capability()
-    print(f"     gpu={torch.cuda.get_device_name(0)} cap=sm_{c[0]}{c[1]}")
-    print(f"     archs={torch.cuda.get_arch_list()}")
-    x = torch.randn(128, 128, device="cuda", dtype=torch.bfloat16)
-    (x @ x).float().sum().item()          # ← 실제 커널 실행 스모크 테스트
-    print("     ✔ CUDA bfloat16 커널 실행 OK")
+    print("GPU:", torch.cuda.get_device_name(0))
+    print("CUDA:", torch.version.cuda)
 else:
-    print("     ⚠ CUDA 불가 → worker_stt.py 가 CPU 로 폴백합니다")
-from espnet2.bin.asr_inference import Speech2Text
-from reazonspeech.espnet.asr import transcribe, audio_from_path
-import reazonspeech.espnet.asr.ctc as _ctc
-print("     ✔ import OK")
-PYEOF
+    raise RuntimeError("CUDA GPU를 사용할 수 없습니다.")
+PY
 
-echo "=============================================="
-echo "▶ [5/6] 모델 가중치 다운로드"
-echo "=============================================="
-cd "$REPO_DIR"
-"$VENV_LADA/bin/python" download_models.py
+mkdir -p \
+    /workspace/jobs \
+    /workspace/.cache/huggingface \
+    /workspace/.cache/torch
 
-echo "=============================================="
-echo "▶ [6/6] Web UI 실행"
-echo "=============================================="
-cd "$REPO_DIR"
-python app.py
-EOF
+# 기존 웹 서버 종료
+if [ -f "${PID_FILE}" ]; then
+    OLD_PID="$(cat "${PID_FILE}" || true)"
+    if [ -n "${OLD_PID}" ] && kill -0 "${OLD_PID}" 2>/dev/null; then
+        kill "${OLD_PID}" || true
+        sleep 2
+    fi
+    rm -f "${PID_FILE}"
+fi
 
-cd /workspace/repo && bash setup.sh
+echo "========================================"
+echo " 웹 서버 시작"
+echo "========================================"
+
+cd "${APP_DIR}"
+
+nohup env \
+    HF_HOME="${HF_HOME}" \
+    TORCH_HOME="${TORCH_HOME}" \
+    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+    GRADIO_SERVER_NAME="0.0.0.0" \
+    GRADIO_SERVER_PORT="11111" \
+    "${PYTHON}" "${APP_DIR}/app.py" \
+    >"${LOG_FILE}" 2>&1 &
+
+APP_PID=$!
+echo "${APP_PID}" > "${PID_FILE}"
+
+echo "웹 서버 PID: ${APP_PID}"
+echo "로그 파일: ${LOG_FILE}"
+
+for i in $(seq 1 30); do
+    if curl -fsS "http://127.0.0.1:11111/" >/dev/null 2>&1; then
+        echo "웹 서버가 정상적으로 시작되었습니다."
+        echo "Vast.ai의 Open 버튼을 눌러 접속하세요."
+        exit 0
+    fi
+
+    if ! kill -0 "${APP_PID}" 2>/dev/null; then
+        echo "웹 서버 실행에 실패했습니다."
+        tail -n 100 "${LOG_FILE}" || true
+        exit 1
+    fi
+
+    sleep 2
+done
+
+echo "서버는 실행 중이지만 준비 시간이 오래 걸리고 있습니다."
+echo "다음 명령으로 로그를 확인하세요:"
+echo "tail -f ${LOG_FILE}"
