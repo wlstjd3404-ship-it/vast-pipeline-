@@ -18,7 +18,7 @@ nvidia_ld_path() {
 }
 
 echo "=============================================="
-echo "▶ [0/6] 이전 가상환경 초기화"
+echo "▶ [0/6] 이전 가상환경 완전 초기화"
 echo "=============================================="
 rm -rf "$VENV_LADA" "$VENV_STT"
 
@@ -44,7 +44,7 @@ python3 -m venv "$VENV_LADA"
 "$VENV_LADA/bin/pip" install -q --upgrade pip
 "$VENV_LADA/bin/pip" install -q "setuptools<81" wheel
 
-# 독립 PyTorch cu124 및 런타임 설치
+# PyTorch 공식 cu124 바이너리 및 CUDA 12 런타임 설치
 "$VENV_LADA/bin/pip" install -q torch torchvision --index-url https://download.pytorch.org/whl/cu124
 "$VENV_LADA/bin/pip" install -q nvidia-cusparselt-cu12
 
@@ -110,13 +110,13 @@ echo "=============================================="
 echo "▶ [5/6] 모델 가중치 다운로드"
 echo "=============================================="
 cd "$REPO_DIR"
-"$VENV_LADA/bin/python" download_models.py[cite: 3]
+"$VENV_LADA/bin/python" download_models.py
 
 echo "=============================================="
 echo "▶ [6/6] Web UI 실행"
 echo "=============================================="
 cd "$REPO_DIR"
-python app.py[cite: 4]
+python app.py
 EOF
 
-cd /workspace/repo && bash setup.sh
+bash /workspace/repo/setup.sh
