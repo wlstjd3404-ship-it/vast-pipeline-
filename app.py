@@ -676,3 +676,160 @@ References.txt
 audio001.wav
 audio002.wav
 audio003.mp3
+```
+
+`References.txt` 예시:
+
+```text
+audio001.wav
+audio002.wav
+audio003.mp3
+```
+
+파일은 `References.txt`에 작성된 순서대로 처리됩니다.
+            """
+        )
+
+    drive_url = gr.Textbox(
+        label="Google Drive 공개 폴더 URL",
+        value=DEFAULT_DRIVE_URL,
+        lines=2,
+        placeholder="Google Drive 폴더 주소를 입력하세요.",
+    )
+
+    hf_token = gr.Textbox(
+        label="Hugging Face 토큰(선택 사항)",
+        type="password",
+        placeholder="필요한 경우에만 입력하세요.",
+    )
+
+    with gr.Row():
+        use_noise_reduction = gr.Checkbox(
+            label="노이즈 제거 사용",
+            value=True,
+        )
+
+        prop_decrease = gr.Slider(
+            minimum=0.0,
+            maximum=1.0,
+            value=0.8,
+            step=0.05,
+            label="노이즈 감소 강도",
+        )
+
+    run_button = gr.Button(
+        "자막 추출 시작",
+        variant="primary",
+        elem_id="run-button",
+    )
+
+    gr.Markdown(
+        """
+자막 추출 중에는 페이지를 닫지 마세요.  
+첫 실행에서는 ReazonSpeech 모델을 다운로드하므로 시간이 더 걸릴 수 있습니다.
+        """
+    )
+
+    output_file = gr.File(
+        label="완성된 SRT 다운로드",
+        file_types=[".srt"],
+        interactive=False,
+    )
+
+    output_log = gr.Textbox(
+        label="실행 결과",
+        lines=22,
+        max_lines=40,
+        interactive=False,
+        elem_id="log-box",
+    )
+
+    run_button.click(
+        fn=extract_subtitles,
+        inputs=[
+            drive_url,
+            hf_token,
+            use_noise_reduction,
+            prop_decrease,
+        ],
+        outputs=[
+            output_file,
+            output_log,
+        ],
+        concurrency_limit=1,
+    )
+
+
+# =============================================================================
+# 웹서버 실행
+# =============================================================================
+
+if __name__ == "__main__":
+    print("", flush=True)
+    print("=" * 70, flush=True)
+    print(
+        " ReazonSpeech 자막 추출 웹서버를 시작합니다.",
+        flush=True,
+    )
+    print("=" * 70, flush=True)
+
+    print(
+        f"Python: {os.sys.version}",
+        flush=True,
+    )
+    print(
+        f"NumPy: {np.__version__}",
+        flush=True,
+    )
+    print(
+        f"PyTorch: {torch.__version__}",
+        flush=True,
+    )
+    print(
+        f"CUDA 사용 가능: {torch.cuda.is_available()}",
+        flush=True,
+    )
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA GPU를 사용할 수 없습니다. "
+            "Vast.ai GPU와 PyTorch 환경을 확인하세요."
+        )
+
+    print(
+        f"GPU: {torch.cuda.get_device_name(0)}",
+        flush=True,
+    )
+    print(
+        f"PyTorch CUDA: {torch.version.cuda}",
+        flush=True,
+    )
+
+    print("", flush=True)
+    print(
+        "공개 웹 주소를 생성하고 있습니다.",
+        flush=True,
+    )
+    print(
+        "잠시 후 표시되는 https://....gradio.live 주소를 클릭하세요.",
+        flush=True,
+    )
+    print("", flush=True)
+
+    demo.queue(
+        default_concurrency_limit=1,
+    )
+
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=11111,
+
+        # 개인 PC에서 접속할 수 있는 공개 웹 주소 생성
+        share=True,
+
+        # Vast.ai 서버에서 브라우저를 직접 열지 않음
+        inbrowser=False,
+
+        show_error=True,
+        allowed_paths=[str(JOBS_DIR)],
+    )
