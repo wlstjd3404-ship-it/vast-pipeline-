@@ -18,7 +18,7 @@ nvidia_ld_path() {
 }
 
 echo "=============================================="
-echo "▶ [0/6] 이전 환경 및 실패 흔적 정리"
+echo "▶ [0/6] 이전 가상환경 초기화"
 echo "=============================================="
 rm -rf "$VENV_LADA" "$VENV_STT"
 
@@ -36,7 +36,7 @@ pip install -q --upgrade pip --root-user-action=ignore
 pip install -q "setuptools<81" wheel gradio gdown --root-user-action=ignore
 
 echo "=============================================="
-echo "▶ [3/6] LADA 전용 venv 구축 (독립 venv + PyTorch cu124)"
+echo "▶ [3/6] LADA 독립 venv 구축 (PyTorch cu124)"
 echo "=============================================="
 cd /workspace
 [ -d lada ] || git clone -q https://github.com/ladaapp/lada.git
@@ -44,7 +44,7 @@ python3 -m venv "$VENV_LADA"
 "$VENV_LADA/bin/pip" install -q --upgrade pip
 "$VENV_LADA/bin/pip" install -q "setuptools<81" wheel
 
-# PyTorch 공식 cu124 바이너리 및 CUDA 런타임 설치
+# 독립 PyTorch cu124 및 런타임 설치
 "$VENV_LADA/bin/pip" install -q torch torchvision --index-url https://download.pytorch.org/whl/cu124
 "$VENV_LADA/bin/pip" install -q nvidia-cusparselt-cu12
 
@@ -69,15 +69,15 @@ PYSITE
 echo "  ▶ LADA 환경 검증"
 export LD_LIBRARY_PATH="$(nvidia_ld_path "$VENV_LADA"):${LD_LIBRARY_PATH}"
 "$VENV_LADA/bin/python" - <<'PYEOF'
-import setuptools, numpy, torch
-print(f"     setuptools={setuptools.__version__} numpy={numpy.__version__} torch={torch.__version__} cuda={torch.cuda.is_available()}")
-assert torch.cuda.is_available(), "CUDA 사용 불가"
+import torch
+print(f"     LADA Torch: {torch.__version__} | CUDA Available: {torch.cuda.is_available()}")
+assert torch.cuda.is_available(), "CUDA를 인식하지 못했습니다."
 PYEOF
 
 [ -x "$VENV_LADA/bin/lada-cli" ] || { echo "  ✘ lada-cli 생성 실패"; exit 1; }
 
 echo "=============================================="
-echo "▶ [4/6] STT 전용 venv — Python 3.10 + numpy 1.26"
+echo "▶ [4/6] STT venv 구축 (Python 3.10 + numpy 1.26)"
 echo "=============================================="
 cd /workspace
 [ -d ReazonSpeech ] || git clone -q https://github.com/reazon-research/ReazonSpeech
@@ -100,24 +100,23 @@ cp "$LADA_SP/sitecustomize.py" "$STT_SP/sitecustomize.py" 2>/dev/null || true
 echo "  ▶ STT 환경 검증"
 LD_LIBRARY_PATH="$(nvidia_ld_path "$VENV_STT"):${LD_LIBRARY_PATH}" \
 "$VENV_STT/bin/python" - <<'PYEOF'
-import setuptools, pkg_resources, numpy, librosa, torch
+import torch
 from espnet2.bin.asr_inference import Speech2Text
-from reazonspeech.espnet.asr import transcribe, audio_from_path
-print(f"     torch={torch.__version__} cuda={torch.cuda.is_available()}")
-print("     ✔ STT import OK")
+print(f"     STT Torch: {torch.__version__} | CUDA Available: {torch.cuda.is_available()}")
+print("     ✔ STT import 정상 완료")
 PYEOF
 
 echo "=============================================="
 echo "▶ [5/6] 모델 가중치 다운로드"
 echo "=============================================="
 cd "$REPO_DIR"
-"$VENV_LADA/bin/python" download_models.py
+"$VENV_LADA/bin/python" download_models.py[cite: 3]
 
 echo "=============================================="
 echo "▶ [6/6] Web UI 실행"
 echo "=============================================="
 cd "$REPO_DIR"
-python app.py
+python app.py[cite: 4]
 EOF
 
 cd /workspace/repo && bash setup.sh
