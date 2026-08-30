@@ -1,7 +1,3 @@
-
-## `setup.sh` 전체
-
-```bash
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
@@ -13,6 +9,11 @@ export PIP_DISABLE_PIP_VERSION_CHECK=1
 export HF_HOME="/workspace/.cache/huggingface"
 export TORCH_HOME="/workspace/.cache/torch"
 export XDG_CACHE_HOME="/workspace/.cache"
+
+if [ ! -f "${APP_DIR}/app.py" ]; then
+    echo "app.py를 찾을 수 없습니다: ${APP_DIR}"
+    exit 1
+fi
 
 echo "============================================================"
 echo " 1. 시스템 패키지 설치"
@@ -40,7 +41,8 @@ echo "============================================================"
 
 PYTHON_BIN=""
 
-for candidate in python3.12 python3.11 python3.10 python3; do
+# python3(이미지 기본 = torch가 설치된 인터프리터)를 최우선으로 사용
+for candidate in python3 python3.11 python3.10 python3.12; do
     if command -v "${candidate}" >/dev/null 2>&1; then
         if "${candidate}" - <<'PY' >/dev/null 2>&1
 import sys
@@ -54,14 +56,24 @@ PY
 done
 
 if [ -z "${PYTHON_BIN}" ]; then
-    echo "호환되는 Python이 없어 Python 3.10을 설치합니다."
+    echo "호환되는 Python이 없어 설치를 시도합니다."
 
-    apt-get install -y \
-        python3.10 \
-        python3.10-venv \
-        python3.10-dev
+    for version in 3.11 3.10; do
+        if apt-get install -y \
+            "python${version}" \
+            "python${version}-venv" \
+            "python${version}-dev"
+        then
+            PYTHON_BIN="$(command -v "python${version}")"
+            break
+        fi
+    done
+fi
 
-    PYTHON_BIN="$(command -v python3.10)"
+if [ -z "${PYTHON_BIN}" ]; then
+    echo "Python 3.10~3.12를 준비할 수 없습니다."
+    echo "PyTorch 계열 Vast.ai 템플릿(Ubuntu 22.04 이상)을 사용하세요."
+    exit 1
 fi
 
 echo "사용할 Python:"
@@ -149,6 +161,21 @@ if not torch.cuda.is_available():
     )
 
 print("GPU:", torch.cuda.get_device_name(0))
+PY
+
+echo
+echo "============================================================"
+echo " 5-1. ReazonSpeech 임포트 확인"
+echo "============================================================"
+
+"${PYTHON}" - <<'PY'
+from reazonspeech.espnet.asr import (
+    audio_from_path,
+    transcribe,
+    load_model,
+)
+
+print("ReazonSpeech 임포트 정상")
 PY
 
 echo

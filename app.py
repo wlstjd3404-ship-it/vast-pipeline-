@@ -1,6 +1,7 @@
 import gc
 import inspect
 import os
+import sys
 import threading
 import traceback
 import uuid
@@ -14,9 +15,11 @@ import numpy as np
 import soundfile as sf
 import torch
 
-from espnet2.bin.asr_inference import Speech2Text
-from reazonspeech.espnet.asr import audio_from_path, transcribe
-import reazonspeech.espnet.asr.ctc as _ctc
+from reazonspeech.espnet.asr import (
+    audio_from_path,
+    transcribe,
+    load_model as load_reazon_model,
+)
 
 
 # =============================================================================
@@ -31,8 +34,6 @@ DEFAULT_DRIVE_URL = (
 WORKSPACE = Path("/workspace")
 JOBS_DIR = WORKSPACE / "jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
-
-MODEL_NAME = "reazon-research/reazonspeech-espnet-v2"
 
 MODEL_LOCK = threading.Lock()
 PROCESS_LOCK = threading.Lock()
@@ -171,35 +172,6 @@ def denoise_audio(
 # ReazonSpeech 모델
 # =============================================================================
 
-def patched_ctc_decode(model, samples):
-    speech = (
-        torch.as_tensor(
-            samples,
-            dtype=torch.bfloat16,
-            device=model.device,
-        )
-        .unsqueeze(0)
-    )
-
-    length = torch.tensor(
-        [len(samples)],
-        dtype=torch.long,
-        device=model.device,
-    )
-
-    encoded = model.asr_model.encode(speech, length)[0]
-    probabilities = model.asr_model.ctc.softmax(encoded)
-
-    return (
-        probabilities
-        .detach()
-        .float()
-        .squeeze(0)
-        .cpu()
-        .numpy()
-    )
-
-
 def load_model(hf_token: str | None = None):
     global speech2text
 
@@ -222,18 +194,7 @@ def load_model(hf_token: str | None = None):
             os.environ["HF_TOKEN"] = token
             os.environ["HUGGING_FACE_HUB_TOKEN"] = token
 
-        _ctc.ctc_decode = patched_ctc_decode
-
-        speech2text = Speech2Text.from_pretrained(
-            MODEL_NAME,
-            beam_size=10,
-            ctc_weight=0.4,
-            lm_weight=0.6,
-            normalize_length=True,
-            dtype="bfloat16",
-            nbest=10,
-            device="cuda",
-        )
+        speech2text = load_reazon_model(device="cuda")
 
         return speech2text
 
@@ -372,7 +333,9 @@ def extract_subtitles(
 
             raise FileNotFoundError(
                 "다음 오디오 파일을 찾지 못했습니다:\n"
-                f"{missing_text}"
+                f"{missing_text}\n"
+                "gdown은 폴더 1개당 최대 50개 파일만 받을 수 있습니다. "
+                "파일 수가 50개를 넘으면 폴더를 나누세요."
             )
 
         # ---------------------------------------------------------------------
@@ -699,6 +662,9 @@ audio003.mp3
 ```
 
 파일은 `References.txt`에 작성된 순서대로 처리됩니다.
+
+**주의:** gdown은 폴더 1개당 최대 50개 파일만 다운로드할 수 있습니다.  
+오디오가 50개를 넘으면 폴더를 나눠서 여러 번 실행하세요.
             """
         )
 
@@ -786,7 +752,7 @@ if __name__ == "__main__":
     print("=" * 70, flush=True)
 
     print(
-        f"Python: {os.sys.version}",
+        f"Python: {sys.version}",
         flush=True,
     )
     print(
