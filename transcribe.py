@@ -137,7 +137,8 @@ with open(OUTPUT_SRT, "w", encoding="utf-8") as f:
             continue
 
         print(f"\n[{i}/{len(audio_files)}] {os.path.basename(audio_file)} 추출 시작...")
-        file_duration = librosa.get_duration(path=audio_file)
+        # librosa 버전에 따라 path/filename 인자가 달라지므로 soundfile 사용
+        file_duration = sf.info(audio_file).duration
         print(f"  파일 길이: {file_duration/60:.1f}분")
 
         audio = audio_from_path(audio_file)
