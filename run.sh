@@ -81,13 +81,14 @@ PYCODE
     fi
 
     banner "1-3. Python 패키지 설치 (espnet / ReazonSpeech) - 수 분 소요"
-    "${PY}" -m pip install -q --upgrade pip setuptools wheel
-    "${PY}" -m pip install -q "numpy<2.0" "scipy<1.14"
+    "${PY}" -m pip install -q --upgrade pip "setuptools<82" wheel
+    # Python 3.12 호환 버전으로 강제 업그레이드 (기존 구형 SciPy가 조건만 만족해 남는 문제 방지)
+    "${PY}" -m pip install -q --upgrade --force-reinstall "numpy==1.26.4" "scipy==1.13.1"
     "${PY}" -m pip install -q gdown huggingface_hub librosa soundfile noisereduce
     "${PY}" -m pip install -q espnet espnet_model_zoo
     "${PY}" -m pip install -q "git+https://github.com/reazon-research/ReazonSpeech.git#subdirectory=pkg/espnet-asr"
-    # 코랩과 동일하게 NumPy 1.x 강제 (의존성 설치 과정에서 2.x 로 올라가는 것 방지)
-    "${PY}" -m pip install -q --force-reinstall --no-deps "numpy<2.0"
+    # 의존성 설치 후 NumPy/SciPy 호환 조합과 PyTorch의 setuptools 상한을 다시 고정
+    "${PY}" -m pip install -q --force-reinstall --no-deps "numpy==1.26.4" "scipy==1.13.1" "setuptools<82"
 
     banner "1-4. 임포트 검증"
     "${PY}" - <<'PYCODE'
