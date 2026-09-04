@@ -96,11 +96,14 @@ speech2text = Speech2Text.from_pretrained(
     beam_size        = args.beam_size,  # 기본 20 → 10
     ctc_weight       = 0.4,
     lm_weight        = 0.6,
-    normalize_length = True,
     dtype            = "bfloat16",
     nbest            = 10,
     device           = "cuda",
 )
+# ESPnet 202609부터 normalize_length가 Speech2Text 생성자에서 제거됨.
+# 동일 동작이 필요하면 생성 후 beam_search에 직접 적용한다.
+if hasattr(speech2text, "beam_search"):
+    speech2text.beam_search.normalize_length = True
 
 def _patched_ctc_decode(model, samples):
     # bfloat16 텐서는 .numpy() 가 불가능하므로 .float() 로 변환해서 반환
