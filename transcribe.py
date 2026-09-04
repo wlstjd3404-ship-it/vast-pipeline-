@@ -96,7 +96,8 @@ speech2text = Speech2Text.from_pretrained(
     beam_size        = args.beam_size,  # 기본 20 → 10
     ctc_weight       = 0.4,
     lm_weight        = 0.6,
-    dtype            = "bfloat16",
+    # STFT/cuFFT는 BFloat16 입력을 지원하지 않으므로 전체 추론을 float32로 실행
+    dtype            = "float32",
     nbest            = 10,
     device           = "cuda",
 )
@@ -106,11 +107,12 @@ if hasattr(speech2text, "beam_search"):
     speech2text.beam_search.normalize_length = True
 
 def _patched_ctc_decode(model, samples):
-    # bfloat16 텐서는 .numpy() 가 불가능하므로 .float() 로 변환해서 반환
-    speech = torch.tensor(samples, dtype=torch.bfloat16).to(model.device).unsqueeze(0)
-    length = torch.tensor([len(samples)]).to(model.device)
-    enc = model.asr_model.encode(speech, length)[0]
-    lpz = model.asr_model.ctc.softmax(enc)
+    # STFT/cuFFT는 float32 입력을 요구한다. 출력만 float32 NumPy로 반환한다.
+    speech = torch.as_tensor(samples, dtype=torch.float32, device=model.device).unsqueeze(0)
+    length = torch.tensor([len(samples)], dtype=torch.long, device=model.device)
+    with torch.inference_mode():
+        enc = model.asr_model.encode(speech, length)[0]
+        lpz = model.asr_model.ctc.softmax(enc)
     return lpz.detach().float().squeeze(0).cpu().numpy()
 
 _ctc.ctc_decode = _patched_ctc_decode
