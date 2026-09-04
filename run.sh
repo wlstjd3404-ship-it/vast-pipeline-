@@ -112,7 +112,7 @@ else
     echo "  링크 : ${DRIVE_URL}"
     echo "  저장 : ${AUDIO_DIR}"
     rm -rf "${AUDIO_DIR:?}"/*
-    "${PY}" -m gdown --folder "${DRIVE_URL}" -O "${AUDIO_DIR}" --remaining-ok
+    "${PY}" -m gdown --folder "${DRIVE_URL}" -O "${AUDIO_DIR}"
 fi
 
 # gdown 이 하위 폴더를 만들었을 경우 평탄화
