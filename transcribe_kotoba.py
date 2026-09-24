@@ -119,12 +119,12 @@ with open(OUTPUT_SRT, "w", encoding="utf-8") as f:
             beam_size=args.beam_size,
             vad_filter=True,
             vad_parameters=dict(
-                threshold=0.35,                    # 음성 감지 감도 완화 (기본값 0.5보다 관대하게 인식)
-                min_speech_duration_ms=200,        # 짧은 대답(음, 네 등)도 포착
-                min_silence_duration_ms=1000       # 1초 이상 무음일 때만 구간 분리
+                threshold=0.25,                    # 음성 감지 감도 완화 (기본값 0.5보다 관대하게 인식)
+                min_speech_duration_ms=100,        # 짧은 대답(음, 네 등)도 포착
+                min_silence_duration_ms=300       # 1초 이상 무음일 때만 구간 분리
             ),
             condition_on_previous_text=False,      # 무한 루프 반복 억제
-            no_speech_threshold=0.6,
+            no_speech_threshold=0.85,
             word_timestamps=False
         )
 
