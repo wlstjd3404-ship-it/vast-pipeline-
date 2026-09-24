@@ -18,7 +18,7 @@ parser.add_argument("--audio-dir", default=os.environ.get("AUDIO_DIR", "/workspa
 parser.add_argument("--out",       default=None)
 parser.add_argument("--no-denoise", action="store_true")
 parser.add_argument("--beam-size", type=int, default=5)
-parser.add_argument("--model-id",  type=str, default="kotoba-tech/kotoba-whisper-v2.2-faster")
+parser.add_argument("--model-id", type=str, default="kotoba-tech/kotoba-whisper-v2.0-faster")
 args = parser.parse_args()
 
 AUDIO_DIR  = args.audio_dir
