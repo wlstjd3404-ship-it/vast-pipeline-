@@ -22,13 +22,11 @@ export TORCH_HOME="${WORK}/.cache/torch"
 export HF_HUB_DISABLE_TELEMETRY=1
 mkdir -p "${AUDIO_DIR}" "${OUT_DIR}" "${HF_HOME}" "${TORCH_HOME}"
 
-# Kotoba 전용 독립 가상환경 설정
-KOTOBA_VENV="${WORK}/venv_kotoba"
-if [ ! -d "${KOTOBA_VENV}" ]; then
-    python3 -m venv "${KOTOBA_VENV}"
+# Vast.ai 기본 가상환경 사용
+if [ -f /venv/main/bin/activate ]; then
+    source /venv/main/bin/activate
 fi
-source "${KOTOBA_VENV}/bin/activate"
-PY="${KOTOBA_VENV}/bin/python"
+PY="$(command -v python)"
 
 banner() {
     echo
@@ -47,10 +45,15 @@ else
     apt-get update -qq
     apt-get install -y -qq --no-install-recommends git ffmpeg libsndfile1 > /dev/null
 
-    banner "1-2. RTX 5090 / CUDA 호환성 확인"
+    banner "1-2. RTX 5090 / CUDA 호환성 확인 및 필요시 설치"
     rc=0
     "${PY}" - <<'PYCODE' || rc=$?
-import sys, torch
+import sys
+try:
+    import torch
+except ImportError:
+    sys.exit(42)
+
 print("Python :", sys.version.split()[0])
 print("Torch  :", torch.__version__, "| CUDA", torch.version.cuda)
 if not torch.cuda.is_available():
@@ -63,7 +66,7 @@ if arch not in torch.cuda.get_arch_list():
     sys.exit(42)
 PYCODE
     if [ "${rc}" -eq 42 ]; then
-        echo "▶ RTX 5090(Blackwell) 지원 PyTorch(cu128) 재설치 중..."
+        echo "▶ RTX 5090(Blackwell) 지원 PyTorch(cu128) 설치 중..."
         "${PY}" -m pip install -q --upgrade torch torchaudio --index-url https://download.pytorch.org/whl/cu128
     elif [ "${rc}" -ne 0 ]; then
         exit "${rc}"
